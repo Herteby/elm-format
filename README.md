@@ -1,5 +1,5 @@
 [![Build Status](https://travis-ci.org/avh4/elm-format.svg?branch=master)](https://travis-ci.org/avh4/elm-format)
-[![latest version: 0.8.1](https://img.shields.io/badge/version-0.8.1-orange.svg)](https://github.com/avh4/elm-format/releases/tag/0.8.1)
+[![latest version: 0.8.2](https://img.shields.io/badge/version-0.8.2-orange.svg)](https://github.com/avh4/elm-format/releases/tag/0.8.2)
 
 # elm-format
 
@@ -7,7 +7,7 @@
 >
 > **The format produced by elm-format may change significantly before the 1.0.0 release.**  If this will cause problems for you, please refrain from using elm-format during the beta-test period.
 
-`elm-format` formats [Elm](http://elm-lang.org) source code according to a standard set of rules based on [the official Elm Style Guide](http://elm-lang.org/docs/style-guide). It is inspired by the popular [gofmt](https://blog.golang.org/go-fmt-your-code).
+`elm-format` formats [Elm](https://elm-lang.org) source code according to a standard set of rules based on [the official Elm Style Guide](https://elm-lang.org/docs/style-guide). It is inspired by the popular [gofmt](https://blog.golang.org/go-fmt-your-code).
 
 The benefits of `elm-format`:
  - It makes code **easier to write**, because you never have to worry about minor formatting concerns while powering out new code.
@@ -29,7 +29,7 @@ elm-format --help  # See other command line options
 ```
 
 
-## Installation [![(latest version: 0.8.1)](https://img.shields.io/badge/version-0.8.1-orange.svg)](https://github.com/avh4/elm-format/releases/tag/0.8.1)
+## Installation [![(latest version: 0.8.2)](https://img.shields.io/badge/version-0.8.2-orange.svg)](https://github.com/avh4/elm-format/releases/tag/0.8.2)
 
 > `elm-format` is still in beta.  If you run into any problems, please [report them](https://github.com/avh4/elm-format/issues).
 >
@@ -41,9 +41,11 @@ To install `elm-format`:
 npm install -g elm-format
 ```
 
-or download the version appropriate for your OS from the [release page](https://github.com/avh4/elm-format/releases/tag/0.8.1),
+or download the version appropriate for your OS from the [release page](https://github.com/avh4/elm-format/releases/tag/0.8.2),
 unzip it,
 and place `elm-format` or `elm-format.exe` (windows) on your `PATH`.
+
+On FreeBSD you can `pkg install hs-elm-format` or use [devel/elm-format](https://www.freshports.org/devel/elm-format/), then execute `elm-format` normally.
 
 You must run `elm-format` from the directory that contains your `elm.json` (for Elm 0.19) or `elm-package.json` (for Elm 0.18),
 or else you must pass the appropriate `--elm-version=0.19`/`--elm-version=0.18` command line argument.
@@ -131,7 +133,7 @@ Find your editor in the table below.  The recommended plugin for each editor is 
   </tr>
   <tr>
     <td rowspan=1>JetBrains (WebStorm, etc)</td>
-    <td>:trophy: <a href="https://durkiewicz.github.io/elm-plugin/">Elm Language Plugin</a></td>
+    <td>:trophy: <a href="https://klazuka.github.io/intellij-elm/">intellij-elm</a></td>
     <td>:warning: <a href="#jetbrains-installation">4 steps</a></td>
     <td>❔ TBD</td>
     <td>:white_check_mark:</td>
@@ -251,18 +253,13 @@ The default behavior of `elm-format`-approved plugins is to format Elm files on 
 > Note: If you previously installed a VSCode extension called "elm-format", uninstall it (it is deprecated, and the "elm" extension now provides elm-format integration).
 
 1. Install elm-format
-1. Install [Elm Language Support](https://marketplace.visualstudio.com/items?itemName=sbrink.elm) for VSCode
-
-    ```bash
-    ext install elm
-    ```
-
+1. Install the extension [Elm Language Support](https://marketplace.visualstudio.com/items?itemName=sbrink.elm) for VSCode, which includes syntax and error highlighting
 1. Configure the extension to format on save:
 
-    1. Go to `Preferences -> Settings` in the menu
-    1. In your User Settings, update the following value:
-    
-    ```
+    1. Find your `settings.json` file ([instructions](https://code.visualstudio.com/docs/getstarted/settings#_settings-file-locations)).
+    1. Add the following key-value pair to your `settings.json`:
+
+    ```json
     "[elm]": {
         "editor.formatOnSave": true
     },
@@ -277,12 +274,13 @@ The default behavior of `elm-format`-approved plugins is to format Elm files on 
 
 ### JetBrains installation
 
-This is for WebStorm and other JetBrains IDEs.
+This is for WebStorm and other JetBrains IDEs like IntelliJ and PyCharm.
 
 1. Install elm-format
-1. Install the [Elm Language Plugin](https://durkiewicz.github.io/elm-plugin/) package.
-1. Install the File Watchers plugin (available in the plugin repository)
-1. Add a file watcher for .elm files with the settings as [shown here](img/JetBrains%20setup.png).
+1. Install the [intellij-elm plugin](https://klazuka.github.io/intellij-elm/)
+1. In IntelliJ, open Settings -> Languages & Frameworks -> Elm
+1. Specify the path to elm-format
+
 
 
 ## Development info
@@ -292,18 +290,25 @@ Please note that this project is released with a [Contributor Code of Conduct](C
 ### Building from source
 
 ```bash
+# check out the repo
 brew install haskell-stack
 git clone https://github.com/avh4/elm-format.git
 cd elm-format
+
+# initial setup
 stack setup
-stack build
-stack install
-~/.local/bin/elm-format --help
+stack install shake
+
+# build
+stack runhaskell Shakefile.hs -- build
+
+# run the built elm-format
+"$(stack path --local-install-root)"/bin/elm-format
 ```
 
 ### Running tests
 
 ```bash
-brew install shellcheck
-./tests/run-tests.sh
+stack install shake
+stack runhaskell Shakefile.hs
 ```

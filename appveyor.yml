@@ -9,6 +9,9 @@ cache:
 before_test:
 # workaround for https://github.com/appveyor/ci/issues/1426
 - set PATH=%PATH%;C:\Program Files\Git\mingw64\bin
+- set PATH=%PATH%;C:\Python37
+- cp C:\Python37\python.exe C:\Python37\python3.exe
+- set PYTHONIOENCODING=utf-8
 - curl -sS -ostack.zip -L --insecure http://www.stackage.org/stack/windows-i386
 - 7z x stack.zip stack.exe
 
@@ -20,9 +23,9 @@ environment:
 test_script:
 - "set PATH=%PATH%;c:\\stack"
 - stack setup > nil
+- stack install shake
 - stack path
-- stack build
-- bash tests/run-tests.sh
+- stack runhaskell Shakefile.hs
 - mkdir -p dist
 - stack install --local-bin-path=dist
 

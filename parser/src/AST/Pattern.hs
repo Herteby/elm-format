@@ -21,9 +21,10 @@ data Pattern'
     | EmptyListPattern Comments
     | List [Commented Pattern]
     | ConsPattern
-        { first :: (Pattern, Maybe String)
+        { first :: WithEol Pattern
         , rest :: [(Comments, Comments, Pattern, Maybe String)]
         }
+    | EmptyRecordPattern Comments
     | Record [Commented LowercaseIdentifier]
     | Alias (Pattern, Comments) (Comments, LowercaseIdentifier)
     deriving (Eq, Show)

@@ -1,3 +1,22 @@
+## 0.8.2
+
+New features:
+  - Invalid `(..)` in `@docs` lines are automatically removed.
+  - When not specifying `--elm-version`, if auto-detection fails, Elm 0.19 will be assumed instead of failing with an error.
+  - `module` lines with no `exposing` clause will have the clause automatically generated.
+  
+Feature changes:
+  - `exposing (..)` in `module` lines is no longer expanded.
+
+Bug fixes:
+  - Error messages are now correctly written to stderr.
+  - Literal tabs are now allowed in String and Char literals, as is allowed by Elm 0.19.
+  - Char literals immediately following variable names are now correctly handled for Elm 0.19.
+  - Empty record patterns (allowed by Elm 0.19) are now correctly handled.
+  - Doc comment code blocks containing only a valid Elm `module` line no longer cause a crash.
+  - `module` lines in doc comment code blocks are no longer removed.
+
+
 ## 0.8.1
 
 New features:
@@ -10,7 +29,7 @@ Bug fixes:
   - For Elm 0.18 and earlier, tag listings of documented custom types are no longer converted to `(..)`
   - Listing a value more than once in module documentation no longer results in an invalid module line
   - Code blocks in doc comments containing commented Elm expressions are now correctly separated by a single blank line
-  - When converting `exposing (..)` to an explicit listing, undocumented values are not longer hidden
+  - When converting `exposing (..)` to an explicit listing, undocumented values are no longer hidden
 
 
 ## 0.8.0

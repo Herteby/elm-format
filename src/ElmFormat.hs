@@ -155,7 +155,7 @@ determineWhatToDoFromConfig config resolvedInputFiles =
 
 exitWithError :: World m => ErrorMessage -> m ()
 exitWithError message =
-    (putStrLn $ Helpers.r $ message)
+    (putStrLnStderr $ Helpers.r $ message)
         >> exitFailure
 
 
@@ -227,6 +227,7 @@ main'' elmFormatVersion_ experimental_ args =
                     case determineWhatToDoFromConfig config resolvedInputFiles of
                         Left NoInputs ->
                             (handleParseResult $ Flags.showHelpText elmFormatVersion_ experimental_)
+                                -- TODO: handleParseResult is exitSuccess, so we never get to exitFailure
                                 >> exitFailure
 
                         Left message ->
@@ -262,20 +263,20 @@ main'' elmFormatVersion_ experimental_ args =
 autoDetectElmVersion :: World m => m (Either String ElmVersion)
 autoDetectElmVersion =
     do
-        hasElmJson <- doesFileExist "elm.json"
-        if hasElmJson
-            then return $ Right Elm_0_19
-            else
+        hasElmPackageJson <- doesFileExist "elm-package.json"
+        if hasElmPackageJson
+            then
                 do
-                    hasElmPackageJson <- doesFileExist "elm-package.json"
-                    if hasElmPackageJson
-                        then return $ Right Elm_0_18
-                        else return $ Left "I couldn't figure out what version of Elm you are using!\n\nYou should either run elm-format from the directory containing\nyour elm.json (for Elm 0.19) or elm-package.json (for Elm 0.18),\nor tell me which version of Elm with --elm-version=0.19 or --elm-version=0.18\n\n"
+                    hasElmJson <- doesFileExist "elm.json"
+                    if hasElmJson
+                        then return $ Right Elm_0_19
+                        else return $ Right Elm_0_18
+            else return $ Right Elm_0_19
 
 
 validate :: ElmVersion -> (FilePath, Text.Text) -> Either InfoMessage ()
 validate elmVersion (inputFile, inputText) =
-    case Parse.parse inputText of
+    case Parse.parse elmVersion inputText of
         Result.Result _ (Result.Ok modu) ->
             if inputText /= Render.render elmVersion modu then
                 Left $ FileWouldChange inputFile
@@ -291,9 +292,9 @@ data FormatResult
     | Changed FilePath Text.Text
 
 
-parseModule :: (FilePath, Text.Text) -> Either InfoMessage AST.Module.Module
-parseModule (inputFile, inputText) =
-    case Parse.parse inputText of
+parseModule :: ElmVersion -> (FilePath, Text.Text) -> Either InfoMessage AST.Module.Module
+parseModule elmVersion (inputFile, inputText) =
+    case Parse.parse elmVersion inputText of
         Result.Result _ (Result.Ok modu) ->
             Right modu
 
@@ -303,7 +304,7 @@ parseModule (inputFile, inputText) =
 
 format :: ElmVersion -> (FilePath, Text.Text) -> Either InfoMessage FormatResult
 format elmVersion (inputFile, inputText) =
-    case parseModule (inputFile, inputText) of
+    case parseModule elmVersion (inputFile, inputText) of
         Right modu ->
             let
                 outputText = Render.render elmVersion modu
@@ -391,7 +392,7 @@ doIt elmVersion whatToDo =
                 formatFile file = (format elmVersion <$> ElmFormat.readFile file) >>= logErrorOr ElmFormat.updateFile
 
         StdinToJson ->
-            (fmap (Text.pack . Text.JSON.encode . AST.Json.showModule) <$> parseModule <$> readStdin) >>= logErrorOr OutputConsole.writeStdout
+            (fmap (Text.pack . Text.JSON.encode . AST.Json.showModule) <$> parseModule elmVersion <$> readStdin) >>= logErrorOr OutputConsole.writeStdout
 
         -- TODO: this prints "Processing such-and-such-a-file.elm" which makes the JSON output invalid
         -- FileToJson inputFile ->

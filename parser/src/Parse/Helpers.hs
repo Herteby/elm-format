@@ -12,6 +12,7 @@ import AST.V0_16
 import qualified AST.Expression
 import qualified AST.Helpers as Help
 import qualified AST.Variable
+import ElmVersion
 import qualified Parse.State as State
 import Parse.Comments
 import Parse.IParser
@@ -53,65 +54,67 @@ iParseWithState sourceName state aParser input =
 
 -- VARIABLES
 
-var :: IParser AST.Variable.Ref
-var =
-  try qualifiedVar <|> qualifiedTag <?> "a name"
+var :: ElmVersion -> IParser AST.Variable.Ref
+var elmVersion =
+  try (qualifiedVar elmVersion) <|> qualifiedTag elmVersion <?> "a name"
 
 
-lowVar :: IParser LowercaseIdentifier
-lowVar =
-  LowercaseIdentifier <$> makeVar lower <?> "a lower case name"
+lowVar :: ElmVersion -> IParser LowercaseIdentifier
+lowVar elmVersion =
+  LowercaseIdentifier <$> makeVar elmVersion lower <?> "a lower case name"
 
 
-capVar :: IParser UppercaseIdentifier
-capVar =
-  UppercaseIdentifier <$> makeVar upper <?> "an upper case name"
+capVar :: ElmVersion -> IParser UppercaseIdentifier
+capVar elmVersion =
+  UppercaseIdentifier <$> makeVar elmVersion upper <?> "an upper case name"
 
 
-qualifiedVar :: IParser AST.Variable.Ref
-qualifiedVar =
+qualifiedVar :: ElmVersion -> IParser AST.Variable.Ref
+qualifiedVar elmVersion =
     AST.Variable.VarRef
-        <$> many (const <$> capVar <*> string ".")
-        <*> lowVar
+        <$> many (const <$> capVar elmVersion <*> string ".")
+        <*> lowVar elmVersion
 
 
-qualifiedTag :: IParser AST.Variable.Ref
-qualifiedTag =
+qualifiedTag :: ElmVersion -> IParser AST.Variable.Ref
+qualifiedTag elmVersion =
     AST.Variable.TagRef
-        <$> many (try $ const <$> capVar <*> string ".")
-        <*> capVar
+        <$> many (try $ const <$> capVar elmVersion <*> string ".")
+        <*> capVar elmVersion
 
 
-rLabel :: IParser LowercaseIdentifier
+rLabel :: ElmVersion -> IParser LowercaseIdentifier
 rLabel = lowVar
 
 
-innerVarChar :: IParser Char
-innerVarChar =
-  alphaNum <|> char '_' <|> char '\'' <?> "more letters in this name"
+innerVarChar :: ElmVersion -> IParser Char
+innerVarChar elmVersion =
+    if syntax_0_19_disallowApostropheInVars elmVersion
+        then alphaNum <|> char '_' <?> "more letters in this name"
+        else alphaNum <|> char '_' <|> char '\'' <?> "more letters in this name"
 
 
-makeVar :: IParser Char -> IParser String
-makeVar firstChar =
-  do  variable <- (:) <$> firstChar <*> many innerVarChar
+makeVar :: ElmVersion -> IParser Char -> IParser String
+makeVar elmVersion firstChar =
+  do  variable <- (:) <$> firstChar <*> many (innerVarChar elmVersion)
       if variable `elem` reserveds
         then fail (Syntax.keyword variable)
         else return variable
 
 
-reserved :: String -> IParser ()
-reserved word =
+reserved :: ElmVersion -> String -> IParser ()
+reserved elmVersion word =
   expecting ("reserved word `" ++ word ++ "`") $
     do  _ <- string word
-        notFollowedBy innerVarChar
+        notFollowedBy (innerVarChar elmVersion)
         return ()
 
 
 -- INFIX OPERATORS
 
-anyOp :: IParser AST.Variable.Ref
-anyOp =
-  (betwixt '`' '`' qualifiedVar <?> "an infix operator like `andThen`")
+anyOp :: ElmVersion -> IParser AST.Variable.Ref
+anyOp elmVersion =
+  (betwixt '`' '`' (qualifiedVar elmVersion) <?> "an infix operator like `andThen`")
   <|> (AST.Variable.OpRef <$> symOp)
 
 
@@ -220,14 +223,14 @@ spaceySepBy1'' sep parser =
     do
         result <- spaceySepBy1 sep parser
         case result of
-            Single (item, eol) ->
+            Single (WithEol item eol) ->
                 return $ \pre post -> [item pre (combine eol post)]
 
-            Multiple ((first, firstEol), postFirst) rest (preLast, (last, eol)) ->
+            Multiple (WithEol first firstEol, postFirst) rest (preLast, WithEol last eol) ->
                 return $ \preFirst postLast ->
                     concat
                         [ [first preFirst $ combine firstEol postFirst]
-                        , fmap (\(Commented pre (item, eol) post) -> item pre $ combine eol post) rest
+                        , fmap (\(Commented pre (WithEol item eol) post) -> item pre $ combine eol post) rest
                         , [last preLast $ combine eol postLast ]
                         ]
 
@@ -287,7 +290,7 @@ keyValue parseSep parseKey parseVal =
       )
 
 
-separated :: IParser sep -> IParser e -> IParser (Either e (R.Region, (e,Maybe String), [(Comments, Comments, e, Maybe String)], Bool))
+separated :: IParser sep -> IParser e -> IParser (Either e (R.Region, (WithEol e), [(Comments, Comments, e, Maybe String)], Bool))
 separated sep expr' =
   let
     subparser =
@@ -302,10 +305,10 @@ separated sep expr' =
                     t2 <- separated sep expr'
                     end <- getMyPosition
                     case t2 of
-                        Right (_, (t2',eolT2), ts, _) ->
+                        Right (_, WithEol t2' eolT2, ts, _) ->
                           return $ \multiline -> Right
                             ( R.Region start end
-                            , (t1, eolT1)
+                            , WithEol t1 eolT1
                             , (preArrow, postArrow, t2', eolT2):ts
                             , multiline
                             )
@@ -314,7 +317,7 @@ separated sep expr' =
                             eol <- restOfLine
                             return $ \multiline -> Right
                               ( R.Region start end
-                              , (t1, eolT1)
+                              , WithEol t1 eolT1
                               , [(preArrow, postArrow, t2', eol)]
                               , multiline)
   in
@@ -477,8 +480,8 @@ located parser =
       return (start, value, end)
 
 
-accessible :: IParser AST.Expression.Expr -> IParser AST.Expression.Expr
-accessible exprParser =
+accessible :: ElmVersion -> IParser AST.Expression.Expr -> IParser AST.Expression.Expr
+accessible elmVersion exprParser =
   do  start <- getMyPosition
 
       annotatedRootExpr@(A.A _ _rootExpr) <- exprParser
@@ -490,8 +493,8 @@ accessible exprParser =
           return annotatedRootExpr
 
         Just _ ->
-          accessible $
-            do  v <- lowVar
+          accessible elmVersion $
+            do  v <- lowVar elmVersion
                 end <- getMyPosition
                 return . A.at start end $
                     -- case rootExpr of
@@ -508,10 +511,10 @@ dot =
       notFollowedBy (char '.')
 
 
-commentedKeyword :: String -> IParser a -> IParser (KeywordCommented a)
-commentedKeyword word parser =
+commentedKeyword :: ElmVersion -> String -> IParser a -> IParser (KeywordCommented a)
+commentedKeyword elmVersion word parser =
   do
-    pre <- try (whitespace <* reserved word)
+    pre <- try (whitespace <* reserved elmVersion word)
     post <- whitespace
     value <- parser
     return $ KeywordCommented pre post value

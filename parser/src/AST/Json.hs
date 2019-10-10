@@ -2,6 +2,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 module AST.Json where
 
+import Elm.Utils ((|>))
+
 import AST.Declaration
 import AST.Expression
 import AST.MapNamespace
@@ -9,13 +11,17 @@ import AST.Module
 import AST.Pattern
 import AST.Variable
 import AST.V0_16
+import Data.Maybe (mapMaybe)
 import Reporting.Annotation hiding (map)
 import Text.JSON hiding (showJSON)
 
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
+import qualified Data.Maybe as Maybe
 import qualified ElmFormat.Version
 import qualified Reporting.Region as Region
+import qualified ReversedList
+import ReversedList (Reversed)
 
 
 pleaseReport :: String -> String -> a
@@ -24,8 +30,14 @@ pleaseReport what details =
 
 
 showModule :: Module -> JSValue
-showModule (Module _ (Header _ (Commented _ name _) _ _) _ (_, imports) body) =
+showModule (Module _ maybeHeader _ (_, imports) body) =
     let
+        header =
+            maybeHeader
+                |> Maybe.fromMaybe AST.Module.defaultHeader
+
+        (Header _ (Commented _ name _) _ _) = header
+
         getAlias :: ImportMethod -> Maybe UppercaseIdentifier
         getAlias importMethod =
             fmap (snd . snd) (alias importMethod)
@@ -55,8 +67,56 @@ showModule (Module _ (Header _ (Commented _ name _) _ _) _ (_, imports) body) =
     makeObj
         [ ( "moduleName", showJSON name )
         , ( "imports", makeObj $ fmap importJson $ Map.toList imports )
-        , ( "body" , JSArray $ fmap showJSON $ mapNamespace normalizeNamespace body )
+        , ( "body" , JSArray $ fmap showJSON $ mergeDeclarations $ mapNamespace normalizeNamespace body )
         ]
+
+
+data MergedTopLevelStructure
+    = MergedDefinition
+        { _definitionLocation :: Region.Region
+        , _name :: LowercaseIdentifier
+        , _args :: List (PreCommented Pattern)
+        , _preEquals :: Comments
+        , _expression :: Expr
+        , _doc :: Maybe Comment
+        , _annotation :: Maybe (Comments, Comments, Type)
+        }
+    | TodoTopLevelStructure String
+
+
+mergeDeclarations :: List (TopLevelStructure Declaration) -> List MergedTopLevelStructure
+mergeDeclarations decls =
+    let
+        collectAnnotation decl =
+            case decl of
+                Entry (A _ (TypeAnnotation (VarRef [] name, preColon) (postColon, typ))) -> Just (name, (preColon, postColon, typ))
+                _ -> Nothing
+
+        annotations :: Map.Map LowercaseIdentifier (Comments, Comments, Type)
+        annotations =
+            Map.fromList $ mapMaybe collectAnnotation decls
+
+        merge decl =
+            case decl of
+                Entry (A region (Definition (A _ (VarPattern name)) args preEquals expr)) ->
+                    Just $ MergedDefinition
+                        { _definitionLocation = region
+                        , _name = name
+                        , _args = args
+                        , _preEquals = preEquals
+                        , _expression = expr
+                        , _doc = Nothing -- TODO: merge docs
+                        , _annotation = Map.lookup name annotations
+                        }
+
+                Entry (A _ (TypeAnnotation _ _)) ->
+                    -- TODO: retain annotations that don't have a matching definition
+                    Nothing
+
+                _ ->
+                    Just $ TodoTopLevelStructure (show decl)
+    in
+    mapMaybe merge decls
 
 
 class ToJSON a where
@@ -80,7 +140,12 @@ instance ToJSON Region.Position where
 
 
 instance ToJSON (List UppercaseIdentifier) where
-    showJSON = JSString . toJSString . List.intercalate "." . fmap (\(UppercaseIdentifier v) -> v)
+    showJSON [] = JSNull
+    showJSON namespace = (JSString . toJSString . List.intercalate "." . fmap (\(UppercaseIdentifier v) -> v)) namespace
+
+
+instance ToJSON UppercaseIdentifier where
+    showJSON (UppercaseIdentifier name) = JSString $ toJSString name
 
 
 showImportListingJSON :: Listing DetailedListing -> JSValue
@@ -104,15 +169,28 @@ instance ToJSON DetailedListing where
             ]
 
 
-instance ToJSON (TopLevelStructure Declaration) where
-  showJSON (Entry (A region (Definition (A _ (VarPattern (LowercaseIdentifier var))) _ _ expr))) =
-    makeObj
-      [ type_ "Definition"
-      , ("name" , JSString $ toJSString var)
-      , ("expression" , showJSON expr)
-      , sourceLocation region
-      ]
-  showJSON _ = JSString $ toJSString "TODO: Decl"
+instance ToJSON MergedTopLevelStructure where
+    showJSON (TodoTopLevelStructure what) =
+        JSString $ toJSString ("TODO: " ++ what)
+    showJSON (MergedDefinition region (LowercaseIdentifier name) args _ expression doc annotation) =
+        makeObj
+            [ type_ "Definition"
+            , ( "name" , JSString $ toJSString name )
+            , ( "returnType", maybe JSNull (\(_, _, t) -> showJSON t) annotation )
+            , ( "expression" , showJSON expression )
+            , sourceLocation region
+            ]
+
+-- instance ToJSON (TopLevelStructure Declaration) where
+--   showJSON (Entry (A region (Definition (A _ (VarPattern (LowercaseIdentifier var))) _ _ expr))) =
+--     makeObj
+--       [ type_ "Definition"
+--       , ( "name" , JSString $ toJSString var )
+--       , ( "returnType", JSNull )
+--       , ( "expression" , showJSON expr )
+--       , sourceLocation region
+--       ]
+--   showJSON _ = JSString $ toJSString "TODO: Decl"
 
 
 instance ToJSON Expr where
@@ -132,6 +210,17 @@ instance ToJSON Expr where
                     )
                   ]
 
+          AST.Expression.Literal (FloatNum value repr) ->
+              makeObj
+                  [ type_ "FloatLiteral"
+                  , ("value", JSRational False $ toRational value)
+                  , ("display"
+                    , makeObj
+                        [ ("representation", showJSON repr)
+                        ]
+                    )
+                  ]
+
           AST.Expression.Literal (Boolean value) ->
             makeObj
                 [ type_ "ExternalReference"
@@ -139,6 +228,22 @@ instance ToJSON Expr where
                 , ("identifier", JSString $ toJSString $ show value)
                 , sourceLocation region
                 ]
+
+          AST.Expression.Literal (Chr chr) ->
+              makeObj
+                  [ type_ "CharLiteral"
+                  , ("module", JSString $ toJSString "Char")
+                  , ("value", JSString $ toJSString [chr])
+                  , sourceLocation region
+                  ]
+
+          AST.Expression.Literal (Str str _) ->
+              makeObj
+                  [ type_ "StringLiteral"
+                  , ("module", JSString $ toJSString "String")
+                  , ("value", JSString $ toJSString str)
+                  , sourceLocation region
+                  ]
 
           VarExpr (VarRef [] (LowercaseIdentifier var)) ->
             variableReference region var
@@ -157,6 +262,9 @@ instance ToJSON Expr where
 
           VarExpr (OpRef (SymbolIdentifier sym)) ->
             variableReference region sym
+
+          VarExpr _ ->
+              JSString $ toJSString "TODO: VarExpr"
 
           App expr args _ ->
               makeObj
@@ -194,7 +302,7 @@ instance ToJSON Expr where
           ExplicitList terms _ _ ->
               makeObj
                   [ type_ "ListLiteral"
-                  , ("terms", JSArray $ fmap showJSON (map (\(_, (_, (term, _))) -> term) terms))
+                  , ("terms", JSArray $ fmap showJSON (map (\(_, (_, WithEol term _)) -> term) terms))
                   ]
 
           AST.Expression.Tuple exprs _ ->
@@ -214,7 +322,7 @@ instance ToJSON Expr where
                   fieldsJSON =
                       ( "fields"
                       , makeObj $ fmap
-                          (\(_, (_, (Pair (LowercaseIdentifier key, _) (_, value) _, _))) ->
+                          (\(_, (_, WithEol (Pair (LowercaseIdentifier key, _) (_, value) _) _)) ->
                              (key, showJSON value)
                           )
                           fields
@@ -224,7 +332,7 @@ instance ToJSON Expr where
                       ( "fieldOrder"
                       , JSArray $
                             fmap (JSString . toJSString) $
-                            fmap (\(_, (_, (Pair (LowercaseIdentifier key, _) _ _, _))) -> key) fields
+                            fmap (\(_, (_, WithEol (Pair (LowercaseIdentifier key, _) _ _) _)) -> key) fields
                       )
               in
               case base of
@@ -308,8 +416,14 @@ instance ToJSON Expr where
                     )
                   ]
 
-          _ ->
-              JSString $ toJSString "TODO: Expr"
+          Range _ _ _ ->
+              JSString $ toJSString "TODO: Range"
+
+          AccessFunction _ ->
+              JSString $ toJSString "TODO: AccessFunction"
+
+          GLShader _ ->
+              JSString $ toJSString "TODO: GLShader"
 
 
 variableReference :: Region.Region -> String -> JSValue
@@ -345,9 +459,56 @@ instance ToJSON IntRepresentation where
     showJSON HexadecimalInt = JSString $ toJSString $ "HexadecimalInt"
 
 
+instance ToJSON FloatRepresentation where
+    showJSON DecimalFloat = JSString $ toJSString "DecimalFloat"
+    showJSON ExponentFloat = JSString $ toJSString "ExponentFloat"
+
+
 instance ToJSON Pattern' where
   showJSON pattern' =
       JSString $ toJSString $ "TODO: Pattern (" ++ show pattern' ++ ")"
+
+
+instance ToJSON Type where
+    showJSON (A _ type') =
+        case type' of
+            TypeConstruction (NamedConstructor namespace name) args ->
+                makeObj
+                    [ type_ "TypeReference"
+                    , ( "name", showJSON name )
+                    , ( "module", showJSON namespace )
+                    , ( "arguments", JSArray $ fmap (showJSON . snd) args )
+                    ]
+
+            TypeVariable (LowercaseIdentifier name) ->
+                makeObj
+                    [ type_ "TypeVariable"
+                    , ( "name", JSString $ toJSString name )
+                    ]
+
+            FunctionType first rest _ ->
+                case firstRestToRestLast first rest of
+                    (args, WithEol last _) ->
+                        makeObj
+                            [ type_ "FunctionType"
+                            , ( "returnType", showJSON last)
+                            , ( "argumentTypes", JSArray $ fmap (\(WithEol t _, _, _) -> showJSON t) $ args )
+                            ]
+
+            _ ->
+                JSString $ toJSString $ "TODO: Type (" ++ show type' ++ ")"
+        where
+            firstRestToRestLast :: WithEol x -> List (a, b, x, Maybe String) -> (List (WithEol x, a, b), WithEol x)
+            firstRestToRestLast first rest =
+                done $ foldl (flip step) (ReversedList.empty, first) rest
+                where
+                    step :: (a, b, x, Maybe String) -> (Reversed (WithEol x, a, b), WithEol x) -> (Reversed (WithEol x, a, b), WithEol x)
+                    step (a, b, next, dn) (acc, last) =
+                        (ReversedList.push (last, a, b) acc, WithEol next dn)
+
+                    done :: (Reversed (WithEol x, a, b), WithEol x) -> (List (WithEol x, a, b), WithEol x)
+                    done (acc, last) =
+                        (ReversedList.toList acc, last)
 
 
 type_ :: String -> (String, JSValue)

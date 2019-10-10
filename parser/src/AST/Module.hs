@@ -1,7 +1,8 @@
 module AST.Module
-    ( Module(..), Header(..), SourceTag(..)
+    ( Module(..), Header(..), SourceTag(..), SourceSettings
     , UserImport, ImportMethod(..)
     , DetailedListing(..)
+    , defaultHeader
     ) where
 
 import AST.Declaration (TopLevelStructure, Declaration)
@@ -17,7 +18,7 @@ import AST.V0_16
 
 data Module = Module
     { initialComments :: Comments
-    , header :: Header
+    , header :: Maybe Header
     , docs :: A.Located (Maybe Markdown.Blocks)
     , imports :: PreCommented (Map [UppercaseIdentifier] (Comments, ImportMethod))
     , body :: [TopLevelStructure Declaration]
@@ -29,13 +30,7 @@ instance A.Strippable Module where
   stripRegion m =
     Module
     { initialComments = initialComments m
-    , header =
-        Header
-          { srcTag = srcTag $ header m
-          , name = name $ header m
-          , moduleSettings = moduleSettings $ header m
-          , exports = exports $ header m
-          }
+    , header = header m
     , docs = A.stripRegion $ docs m
     , imports = imports m
     , body = map A.stripRegion $ body m
@@ -56,9 +51,18 @@ data Header = Header
     { srcTag :: SourceTag
     , name :: Commented [UppercaseIdentifier]
     , moduleSettings :: Maybe (KeywordCommented SourceSettings)
-    , exports :: KeywordCommented (Var.Listing DetailedListing)
+    , exports :: Maybe (KeywordCommented (Var.Listing DetailedListing))
     }
     deriving (Eq, Show)
+
+
+defaultHeader :: Header
+defaultHeader =
+    Header
+        Normal
+        (Commented [] [UppercaseIdentifier "Main"] [])
+        Nothing
+        Nothing
 
 
 data DetailedListing = DetailedListing
